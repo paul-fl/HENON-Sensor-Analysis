@@ -33,7 +33,7 @@ Bx_raw = np.array(Bx_raw)
 By_raw = np.array(By_raw)
 Bz_raw = np.array(Bz_raw)
 
-scale_factor = 60000 / (2**23)
+scale_factor = 1/128
 Bx = Bx_raw * scale_factor
 By = By_raw * scale_factor
 Bz = Bz_raw * scale_factor
@@ -74,7 +74,7 @@ def analyze_spikes(B, time, threshold=3000, min_spacing=5, window_size=5, offset
 
     # Compute averages before and after each grouped spike
 
-    ### Need to add an offset to the time array to avoid the spike time itself ###
+    ### Need to add an offset to the time array to avoid the spike time itself ### DONE!!
     B_before = []
     B_after = []
     for t_spike in grouped_times:
@@ -94,7 +94,7 @@ bx_spike_data = list(zip(bx_times, bx_before, bx_after))
 by_spike_data = list(zip(by_times, by_before, by_after))
 bz_spike_data = list(zip(bz_times, bz_before, bz_after))
 
-# Results!! Yay
+# Results!! Yay (For spikes detected)
 def print_spike_table(label, times, B_before, B_after):
     print(f"\nDetected {len(times)} {label} spikes:")
     for i, (t, b0, b1) in enumerate(zip(times, B_before, B_after), 1):
@@ -107,60 +107,76 @@ print_spike_table("Bx", bx_times, bx_before, bx_after)
 print_spike_table("By", by_times, by_before, by_after)
 print_spike_table("Bz", bz_times, bz_before, bz_after)
 
+
 Deltas = [-0.5, -1, -1.5, -2, -2.5, 0.5, 1, 1.5, 2, 2.5]
 
-def gain_calcualtion(spike_data, deltas):
-    gains = []
+# Scale factors (μT/V)
+scale_factors = {
+    'x': 19.75022,
+    'y': 18.24994,
+    'z': 20.25004
+}
+
+# Convert ΔV to applied magnetic field (nT)
+Bx_applied = [v * scale_factors['x'] * 1000 for v in Deltas]
+By_applied = [v * scale_factors['z'] * 1000 for v in Deltas]
+Bz_applied = [v * scale_factors['y'] * 1000 for v in Deltas]
+
+def compute_avg_deltaB(spike_data, deltas):
+    deltaBs = []
     spike_data = spike_data[:len(deltas) * 2] 
 
     for i in range(0, len(spike_data), 2):
-        spike1 = spike_data[i]
-        spike2 = spike_data[i + 1]
-        dv1 = deltas[i // 2]
-        dv2 = deltas[i // 2]
+        s1 = spike_data[i]
+        s2 = spike_data[i + 1]
 
-        g1 = (spike1[2] - spike1[1]) / dv1 if dv1 != 0 else None
-        g2 = (spike2[2] - spike2[1]) / dv2 if dv2 != 0 else None
+        dB1 = s1[2] - s1[1] 
+        dB2 = s2[2] - s2[1]
 
-        if g1 is not None and g2 is not None:
-            avg_gain = (abs(g1) + abs(g2)) / 2
-            gains.append(avg_gain)
-        else:
-            gains.append(None)
+        avg_dB = (dB1 - dB2) / 2
+        deltaBs.append(avg_dB)
 
-    return gains
+    return deltaBs
 
-bx_gains = gain_calcualtion(bx_spike_data, Deltas)
-by_gains = gain_calcualtion(by_spike_data, Deltas)
-bz_gains = gain_calcualtion(bz_spike_data, Deltas)
-
-def print_gain_summary(label, gains):
-    valid_gains = [g for g in gains if g is not None]
-    print(f"\n{label} Gains [nT/V]:")
-    for i, g in enumerate(valid_gains, 1):
-        print(f"  Step {i}: {g:.2f} nT/V")
-    print(f"  Average: {np.mean(valid_gains):.2f} ± {np.std(valid_gains):.2f} nT/V")
-
-print_gain_summary("Bx", bx_gains)
-print_gain_summary("By", by_gains)
-print_gain_summary("Bz", bz_gains)
+# Compute average ΔB for each axis
+bx_deltaB = compute_avg_deltaB(bx_spike_data, Deltas)
+by_deltaB = compute_avg_deltaB(by_spike_data, Deltas)
+bz_deltaB = compute_avg_deltaB(bz_spike_data, Deltas)
 
 fig, axs = plt.subplots(3, 1, figsize=(10, 8), sharex=True)
 
-axs[0].plot(Deltas, bx_gains, marker='o', color='tab:blue', label="Bx Gain")
-axs[1].plot(Deltas, by_gains, marker='o', color='tab:orange', label="By Gain")
-axs[2].plot(Deltas, bz_gains, marker='o', color='tab:green', label="Bz Gain")
+axs[0].plot(Bx_applied, bx_deltaB, marker='o', label="Bx ΔB")
+axs[1].plot(By_applied, by_deltaB, marker='o', label="By ΔB")
+axs[2].plot(Bz_applied, bz_deltaB, marker='o', label="Bz ΔB")
 
-axs[0].set_ylabel("Gain [nT/V]")
-axs[1].set_ylabel("Gain [nT/V]")
-axs[2].set_ylabel("Gain [nT/V]")
-axs[2].set_xlabel("Applied Voltage Step [V]")
+axs[0].set_ylabel("ΔB [nT]")
+axs[1].set_ylabel("ΔB [nT]")
+axs[2].set_ylabel("ΔB [nT]")
+axs[2].set_xlabel("Applied Magnetic Field [μT]")
 
 for ax in axs:
     ax.axhline(0, color='grey', linewidth=0.8, linestyle='--')
     ax.grid(True)
     ax.legend(loc="upper left")
 
-plt.suptitle("Magnetic Gain vs Voltage Step")
+plt.suptitle("Average ΔB vs Applied Magnetic Field (Gain = Slope)")
 plt.tight_layout()
 plt.show()
+
+fit_bx, cov_bx = np.polyfit(Bx_applied, bx_deltaB, 1, cov=True)
+fit_by, cov_by = np.polyfit(By_applied, by_deltaB, 1, cov=True)
+fit_bz, cov_bz = np.polyfit(Bz_applied, bz_deltaB, 1, cov=True)
+
+gain_bx = abs(fit_bx[0])
+gain_by = abs(fit_by[0])
+gain_bz = abs(fit_bz[0])
+unc_bx = np.sqrt(cov_bx[0, 0])
+unc_by = np.sqrt(cov_by[0, 0])
+unc_bz = np.sqrt(cov_bz[0, 0])
+
+print("Estimated Sensor Gain:")
+print(f"  Bx: {gain_bx:.2f} +- {unc_bx}")
+print(f"  By: {gain_by:.2f} +- {unc_by}")
+print(f"  Bz: {gain_bz:.2f} +- {unc_bz}")
+
+
