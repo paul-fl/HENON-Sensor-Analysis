@@ -1,18 +1,9 @@
-# Notes 
-# Assume 24 bit ADC:
-# 2^24 = 16,777,216 possible values (−8,388,608 to 8,388,607)
-
-# Assume +- 60,000 nT
-
-#Scale factor:
-# 60,000 nT / 8,388,608 = 0.007152557 nT per ADC count
-
-
 import numpy as np
 import matplotlib.pyplot as plt
 from pathlib import Path
+import pandas as pd
 
-file_path = Path("data/magic_20250815_121509.rawtm.ob")
+file_path = Path("data/IB/magic_20250819_095514.rawtm.ib")
 
 time = []
 Bx_raw, By_raw, Bz_raw = [], [], []
@@ -73,8 +64,6 @@ def analyze_spikes(B, time, threshold=3000, min_spacing=5, window_size=5, offset
             last_time = t
 
     # Compute averages before and after each grouped spike
-
-    ### Need to add an offset to the time array to avoid the spike time itself ### DONE!!
     B_before = []
     B_after = []
     for t_spike in grouped_times:
@@ -103,9 +92,9 @@ def print_spike_table(label, times, B_before, B_after):
         print(f"  {label} before : {b0:.2f} nT")
         print(f"  {label} after  : {b1:.2f} nT")
 
-print_spike_table("Bx", bx_times, bx_before, bx_after)
-print_spike_table("By", by_times, by_before, by_after)
-print_spike_table("Bz", bz_times, bz_before, bz_after)
+# print_spike_table("Bx", bx_times, bx_before, bx_after)
+# print_spike_table("By", by_times, by_before, by_after)
+# print_spike_table("Bz", bz_times, bz_before, bz_after)
 
 
 Deltas = [-0.5, -1, -1.5, -2, -2.5, 0.5, 1, 1.5, 2, 2.5]
@@ -152,14 +141,14 @@ axs[2].plot(Bz_applied, bz_deltaB, marker='o', label="Bz ΔB")
 axs[0].set_ylabel("ΔB [nT]")
 axs[1].set_ylabel("ΔB [nT]")
 axs[2].set_ylabel("ΔB [nT]")
-axs[2].set_xlabel("Applied Magnetic Field [μT]")
+axs[2].set_xlabel("Applied Magnetic Field [nT]")
 
 for ax in axs:
     ax.axhline(0, color='grey', linewidth=0.8, linestyle='--')
     ax.grid(True)
     ax.legend(loc="upper left")
 
-plt.suptitle("Average ΔB vs Applied Magnetic Field (Gain = Slope)")
+plt.suptitle("Average ΔB vs Applied Magnetic Field")
 plt.tight_layout()
 plt.show()
 
@@ -179,4 +168,88 @@ print(f"  Bx: {gain_bx:.2f} +- {unc_bx}")
 print(f"  By: {gain_by:.2f} +- {unc_by}")
 print(f"  Bz: {gain_bz:.2f} +- {unc_bz}")
 
+# Cross analysis
 
+def compute_avg_deltaB_other(spike_times, other_B, time, deltas, window_size=5, offset=0.5):
+    deltaBs = []
+    spike_times = spike_times[:len(deltas) * 2]
+    
+    for i in range(0, len(spike_times), 2):
+        t1 = spike_times[i]
+        t2 = spike_times[i + 1]
+
+        mask_before_1 = (time >= t1 - window_size) & (time < t1 - offset)
+        mask_after_1 = (time > t1) & (time <= t1 + (window_size - offset))
+
+        mask_before_2 = (time >= t2 - window_size) & (time < t2 - offset)
+        mask_after_2 = (time > t2) & (time <= t2 + (window_size - offset))
+
+        if all([np.any(mask_before_1), np.any(mask_after_1),
+                np.any(mask_before_2), np.any(mask_after_2)]):
+            dB1 = np.mean(other_B[mask_after_1]) - np.mean(other_B[mask_before_1])
+            dB2 = np.mean(other_B[mask_after_2]) - np.mean(other_B[mask_before_2])
+            deltaBs.append((dB1 - dB2) / 2)
+
+    return deltaBs
+
+by_from_bx = compute_avg_deltaB_other(bx_times, By, time, Deltas)
+bz_from_bx = compute_avg_deltaB_other(bx_times, Bz, time, Deltas)
+
+bx_from_by = compute_avg_deltaB_other(by_times, Bx, time, Deltas)
+bz_from_by = compute_avg_deltaB_other(by_times, Bz, time, Deltas)
+
+bx_from_bz = compute_avg_deltaB_other(bz_times, Bx, time, Deltas)
+by_from_bz = compute_avg_deltaB_other(bz_times, By, time, Deltas)
+
+df = pd.DataFrame({
+    "Bx_applied [nT]": [v * scale_factors['x'] for v in Bx_applied],
+    "Delta By from Bx": by_from_bx,
+    "Delta Bz from Bx [nT]": bz_from_bx,
+    "By_applied [nT]": [v * scale_factors['z'] for v in By_applied],
+    "Delta Bx from By [nT]": bx_from_by,
+    "Delta Bz from By [nT]": bz_from_by,
+    "Bz_applied [nT]": [v * scale_factors['y'] for v in Bz_applied],
+    "Delta Bx from Bz [nT]": bx_from_bz,
+    "Delta By from Bz [nT]": by_from_bz,
+})
+
+df.to_csv("cross_axis_gain_plot_data.csv", index=False)
+print("Saved plot data to 'cross_axis_gain_plot_data.csv'")
+
+# Fit and plot — same style
+fig, axs = plt.subplots(3, 1, figsize=(10, 8), sharex=True)
+
+axs[0].plot(Bx_applied, by_from_bx, marker='o', label="ΔBy from Bx")
+axs[0].plot(Bx_applied, bz_from_bx, marker='o', label="ΔBz from Bx")
+axs[0].set_title("Spikes in Bx")
+axs[1].plot(By_applied, bx_from_by, marker='o', label="ΔBx from By")
+axs[1].plot(By_applied, bz_from_by, marker='o', label="ΔBz from By")
+axs[1].set_title("Spikes in By")
+axs[2].plot(Bz_applied, bx_from_bz, marker='o', label="ΔBx from Bz")
+axs[2].plot(Bz_applied, by_from_bz, marker='o', label="ΔBy from Bz")
+axs[2].set_title("Spikes in Bz")
+
+for ax in axs:
+    ax.set_ylabel("ΔB [nT]")
+    ax.axhline(0, color='grey', linestyle='--')
+    ax.grid(True)
+    ax.legend()
+
+axs[2].set_xlabel("Applied Magnetic Field [nT]")
+plt.suptitle("Cross-Axis Gain Analysis")
+plt.tight_layout()
+plt.show()
+
+# Fit and print gains for cross-axis analysis
+def fit_and_print_gain(applied, deltaB, axis_label):
+    fit, cov = np.polyfit(applied, deltaB, 1, cov=True)
+    gain = abs(fit[0])
+    unc = np.sqrt(cov[0, 0])
+    print(f"Cross-axis gain for {axis_label}: {gain:.5f} +- {unc}")
+
+fit_and_print_gain(Bx_applied, by_from_bx, "By from Bx")
+fit_and_print_gain(Bx_applied, bz_from_bx, "Bz from Bx")
+fit_and_print_gain(By_applied, bx_from_by, "Bx from By")
+fit_and_print_gain(By_applied, bz_from_by, "Bz from By")
+fit_and_print_gain(Bz_applied, bx_from_bz, "Bx from Bz")
+fit_and_print_gain(Bz_applied, by_from_bz, "By from Bz")
