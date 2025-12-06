@@ -83,7 +83,7 @@ bx_spike_data = list(zip(bx_times, bx_before, bx_after))
 by_spike_data = list(zip(by_times, by_before, by_after))
 bz_spike_data = list(zip(bz_times, bz_before, bz_after))
 
-# Results!! Yay (For spikes detected)
+# Results for spikes detected
 def print_spike_table(label, times, B_before, B_after):
     print(f"\nDetected {len(times)} {label} spikes:")
     for i, (t, b0, b1) in enumerate(zip(times, B_before, B_after), 1):
@@ -169,7 +169,6 @@ print(f"  By: {gain_by:.2f} +- {unc_by}")
 print(f"  Bz: {gain_bz:.2f} +- {unc_bz}")
 
 # Cross analysis
-
 def compute_avg_deltaB_other(spike_times, other_B, time, deltas, window_size=5, offset=0.5):
     deltaBs = []
     spike_times = spike_times[:len(deltas) * 2]
@@ -216,7 +215,7 @@ df = pd.DataFrame({
 df.to_csv("cross_axis_gain_plot_data.csv", index=False)
 print("Saved plot data to 'cross_axis_gain_plot_data.csv'")
 
-# Fit and plot — same style
+# Fit and plot
 fig, axs = plt.subplots(3, 1, figsize=(10, 8), sharex=True)
 
 axs[0].plot(Bx_applied, by_from_bx, marker='o', label="ΔBy from Bx")
